@@ -33,12 +33,6 @@ type Client struct {
 	// Default is DefaultPendingMessages.
 	PendingRequests int
 
-	// Delay between request flushes.
-	// Negative values disable request buffering.
-	//
-	// Default value is DefaultFlushDelay.
-	FlushDelay time.Duration
-
 	// Maximum request time.
 	// Default value is DefaultRequestTimeout.
 	RequestTimeout time.Duration
@@ -101,9 +95,6 @@ func (c *Client) Start() {
 
 	if c.PendingRequests <= 0 {
 		c.PendingRequests = DefaultPendingMessages
-	}
-	if c.FlushDelay == 0 {
-		c.FlushDelay = DefaultFlushDelay
 	}
 	if c.RequestTimeout <= 0 {
 		c.RequestTimeout = DefaultRequestTimeout
@@ -289,12 +280,6 @@ func clientWriter(c *Client, w io.Writer, pendingRequests map[uint64]*clientMess
 	}
 	e := gob.NewEncoder(ww)
 
-	var (
-		flushChan       <-chan time.Time
-		closedFlushChan = make(chan time.Time)
-	)
-	close(closedFlushChan)
-
 	var msgID uint64
 	for {
 		var rpcM *clientMessage
@@ -308,35 +293,24 @@ func clientWriter(c *Client, w io.Writer, pendingRequests map[uint64]*clientMess
 		select {
 		case rpcM = <-c.requestsChan:
 		default:
+			if !c.DisableCompression {
+				if err := ww.Flush(); err != nil {
+					err = fmt.Errorf("gorpc.Client: [%s]. Cannot flush data to compressed stream: [%s]", c.Addr, err)
+					return
+				}
+				if err := zw.Flush(); err != nil {
+					err = fmt.Errorf("gorpc.Client: [%s]. Cannot flush compressed data to wire: [%s]", c.Addr, err)
+					return
+				}
+			}
+			if err := bw.Flush(); err != nil {
+				err = fmt.Errorf("gorpc.Client: [%s]. Cannot flush requests to wire: [%s]", c.Addr, err)
+				return
+			}
 			select {
 			case <-stopChan:
 				return
 			case rpcM = <-c.requestsChan:
-			case <-flushChan:
-				if !c.DisableCompression {
-					if err := ww.Flush(); err != nil {
-						err = fmt.Errorf("gorpc.Client: [%s]. Cannot flush data to compressed stream: [%s]", c.Addr, err)
-						return
-					}
-					if err := zw.Flush(); err != nil {
-						err = fmt.Errorf("gorpc.Client: [%s]. Cannot flush compressed data to wire: [%s]", c.Addr, err)
-						return
-					}
-				}
-				if err := bw.Flush(); err != nil {
-					err = fmt.Errorf("gorpc.Client: [%s]. Cannot flush requests to wire: [%s]", c.Addr, err)
-					return
-				}
-				flushChan = nil
-				continue
-			}
-		}
-
-		if flushChan == nil {
-			if c.FlushDelay > 0 {
-				flushChan = time.After(c.FlushDelay)
-			} else {
-				flushChan = closedFlushChan
 			}
 		}
 

@@ -60,12 +60,6 @@ type Server struct {
 	// Default is DefaultPendingMessages.
 	PendingResponses int
 
-	// The maximum delay between response flushes to clients.
-	// Negative values disable responses' buffering.
-	//
-	// Default is DefaultFlushDelay.
-	FlushDelay time.Duration
-
 	// Size of send buffer per each TCP connection in bytes.
 	// Default is DefaultBufferSize.
 	SendBufferSize int
@@ -114,9 +108,6 @@ func (s *Server) Start() error {
 
 	if s.PendingResponses <= 0 {
 		s.PendingResponses = DefaultPendingMessages
-	}
-	if s.FlushDelay == 0 {
-		s.FlushDelay = DefaultFlushDelay
 	}
 	if s.SendBufferSize <= 0 {
 		s.SendBufferSize = DefaultBufferSize
@@ -324,12 +315,6 @@ func serverWriter(s *Server, w io.Writer, clientAddr string, responsesChan <-cha
 	}
 	e := gob.NewEncoder(ww)
 
-	var (
-		flushChan       <-chan time.Time
-		closedFlushChan = make(chan time.Time)
-	)
-	close(closedFlushChan)
-
 	for {
 		var rpcM *serverMessage
 		select {
@@ -341,35 +326,24 @@ func serverWriter(s *Server, w io.Writer, clientAddr string, responsesChan <-cha
 		select {
 		case rpcM = <-responsesChan:
 		default:
+			if enabledCompression {
+				if err := ww.Flush(); err != nil {
+					logError("gorpc.Server: [%s]->[%s]. Cannot flush data to compressed stream: [%s]", clientAddr, s.Addr, err)
+					return
+				}
+				if err := zw.Flush(); err != nil {
+					logError("gorpc.Server: [%s]->[%s]. Cannot flush compressed data to wire: [%s]", clientAddr, s.Addr, err)
+					return
+				}
+			}
+			if err := bw.Flush(); err != nil {
+				logError("gorpc.Server: [%s]->[%s]. Cannot flush responses to wire: [%s]", clientAddr, s.Addr, err)
+				return
+			}
 			select {
 			case <-stopChan:
 				return
 			case rpcM = <-responsesChan:
-			case <-flushChan:
-				if enabledCompression {
-					if err := ww.Flush(); err != nil {
-						logError("gorpc.Server: [%s]->[%s]. Cannot flush data to compressed stream: [%s]", clientAddr, s.Addr, err)
-						return
-					}
-					if err := zw.Flush(); err != nil {
-						logError("gorpc.Server: [%s]->[%s]. Cannot flush compressed data to wire: [%s]", clientAddr, s.Addr, err)
-						return
-					}
-				}
-				if err := bw.Flush(); err != nil {
-					logError("gorpc.Server: [%s]->[%s]. Cannot flush responses to wire: [%s]", clientAddr, s.Addr, err)
-					return
-				}
-				flushChan = nil
-				continue
-			}
-		}
-
-		if flushChan == nil {
-			if s.FlushDelay > 0 {
-				flushChan = time.After(s.FlushDelay)
-			} else {
-				flushChan = closedFlushChan
 			}
 		}
 

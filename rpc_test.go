@@ -366,60 +366,6 @@ func TestTLS(t *testing.T) {
 	}
 }
 
-func TestNoRequestBufferring(t *testing.T) {
-	testNoBufferring(t, -1, DefaultFlushDelay)
-}
-
-func TestNoResponseBufferring(t *testing.T) {
-	testNoBufferring(t, DefaultFlushDelay, -1)
-}
-
-func TestNoBufferring(t *testing.T) {
-	testNoBufferring(t, DefaultFlushDelay, DefaultFlushDelay)
-}
-
-func testNoBufferring(t *testing.T, requestFlushDelay, responseFlushDelay time.Duration) {
-	s := &Server{
-		Addr:       ":12345",
-		Handler:    func(clientAddr string, request interface{}) interface{} { return request },
-		FlushDelay: responseFlushDelay,
-	}
-	if err := s.Start(); err != nil {
-		t.Fatalf("Server.Start() failed: [%s]", err)
-	}
-	defer s.Stop()
-
-	c := &Client{
-		Addr:           ":12345",
-		RequestTimeout: 100 * time.Millisecond,
-		FlushDelay:     requestFlushDelay,
-	}
-	c.Start()
-	defer c.Stop()
-
-	var wg sync.WaitGroup
-	for j := 0; j < 10; j++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 10; i++ {
-				resp, err := c.Call(i)
-				if err != nil {
-					t.Fatalf("Unexpected error: [%s]", err)
-				}
-				x, ok := resp.(int)
-				if !ok {
-					t.Fatalf("Unexpected response type: %T. Expected int", resp)
-				}
-				if x != i {
-					t.Fatalf("Unexpected value returned: %d. Expected %d", x, i)
-				}
-			}
-		}()
-	}
-	wg.Wait()
-}
-
 func TestIntHandler(t *testing.T) {
 	s := &Server{
 		Addr:    ":15347",
@@ -585,9 +531,8 @@ func TestEchoHandler(t *testing.T) {
 
 func TestConcurrentCall(t *testing.T) {
 	s := &Server{
-		Addr:       ":15351",
-		Handler:    func(clientAddr string, request interface{}) interface{} { return request },
-		FlushDelay: time.Millisecond,
+		Addr:    ":15351",
+		Handler: func(clientAddr string, request interface{}) interface{} { return request },
 	}
 	if err := s.Start(); err != nil {
 		t.Fatalf("Server.Start() failed: [%s]", err)
@@ -595,9 +540,8 @@ func TestConcurrentCall(t *testing.T) {
 	defer s.Stop()
 
 	c := &Client{
-		Addr:       ":15351",
-		Conns:      2,
-		FlushDelay: time.Millisecond,
+		Addr:  ":15351",
+		Conns: 2,
 	}
 	c.Start()
 	defer c.Stop()
@@ -623,9 +567,8 @@ func TestConcurrentCall(t *testing.T) {
 
 func TestCompress(t *testing.T) {
 	s := &Server{
-		Addr:       ":15352",
-		Handler:    func(clientAddr string, request interface{}) interface{} { return request },
-		FlushDelay: time.Millisecond,
+		Addr:    ":15352",
+		Handler: func(clientAddr string, request interface{}) interface{} { return request },
 	}
 	if err := s.Start(); err != nil {
 		t.Fatalf("Server.Start() failed: [%s]", err)
@@ -635,7 +578,6 @@ func TestCompress(t *testing.T) {
 	c1 := &Client{
 		Addr:               ":15352",
 		Conns:              2,
-		FlushDelay:         time.Millisecond,
 		DisableCompression: true,
 	}
 	c1.Start()
@@ -643,7 +585,6 @@ func TestCompress(t *testing.T) {
 
 	c2 := &Client{
 		Addr:               ":15352",
-		FlushDelay:         2 * time.Millisecond,
 		DisableCompression: false,
 	}
 	c2.Start()
